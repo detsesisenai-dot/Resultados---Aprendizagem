@@ -685,7 +685,64 @@
 
             const filteredSearch = useMemo(() => {
                 if (!searchTerm.trim()) return [];
-                return fuse.search(searchTerm).map(result => result.item).slice(0, 15);
+                
+                // 1. Obter resultados brutos e guardar a relevância original da pesquisa
+                const rawResults = fuse.search(searchTerm).map((result, index) => ({ 
+                    item: result.item, 
+                    relevance: index 
+                }));
+                
+                // 2. Ordenação Inteligente: Prioriza Elegíveis -> Melhor Rank -> Relevância
+                rawResults.sort((a, b) => {
+                    const itemA = a.item;
+                    const itemB = b.item;
+                    
+                    if (itemA.elegivel && !itemB.elegivel) return -1;
+                    if (!itemA.elegivel && itemB.elegivel) return 1;
+                    if (itemA.rank !== itemB.rank) return itemA.rank - itemB.rank;
+                    return a.relevance - b.relevance;
+                });
+
+                // 3. Palavras genéricas para ignorar ao determinar o "Grupo" da empresa
+                const genericWords = new Set([
+                    "CONSTRUTORA", "MINERACAO", "INDUSTRIA", "CIA", "EMPRESA", "COOPERATIVA", 
+                    "USINA", "LATICINIOS", "CENTRAL", "SINDICATO", "SECRETARIA", "FUNDO", 
+                    "INSTITUTO", "VIACAO", "TRANSPORTADORA", "ASSOCIACAO", "COMERCIO", 
+                    "FRIGORIFICO", "GRUPO", "LABORATORIO", "SAO", "SANTA", "SANTO", 
+                    "NOVA", "NOVO", "VALE", "AGROPECUARIA", "TRANSPORTES", "SERVICOS",
+                    "CONDOMINIO", "CENTRO", "CLINICA", "HOSPITAL", "COMERCIAL", "DISTRIBUIDORA",
+                    "AGROINDUSTRIA", "SISTEMMA", "RENOVAR", "SPE", "INCORPORACAO"
+                ]);
+                
+                const deduplicated = [];
+                const seenGroups = new Set();
+
+                for (const { item } of rawResults) {
+                    // Limpar e extrair palavras chave do nome
+                    const words = item.empresa.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().split(/[^A-Z0-9]/).filter(w => w.length > 2);
+                    
+                    let groupKey = item.empresa; 
+                    if (words.length > 0) {
+                        let firstWord = words[0];
+                        // Se a primeira palavra for genérica (Ex: Laticínios Bela), usa as duas primeiras para agrupar
+                        if (genericWords.has(firstWord) && words.length > 1) {
+                             groupKey = firstWord + "_" + words[1];
+                        } else {
+                             // Caso contrário, a primeira palavra define o grupo (Ex: CARGILL)
+                             groupKey = firstWord; 
+                        }
+                    }
+                    
+                    // Se o grupo ainda não foi exibido, adiciona à lista visual
+                    if (!seenGroups.has(groupKey)) {
+                        seenGroups.add(groupKey);
+                        deduplicated.push(item);
+                    }
+                    
+                    if (deduplicated.length >= 15) break;
+                }
+
+                return deduplicated;
             }, [searchTerm, fuse]);
 
             // Motor de Auditoria Atualizado
